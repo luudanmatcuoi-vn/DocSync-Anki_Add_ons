@@ -1,0 +1,52 @@
+# Anki Notes Import and Export
+
+## Description
+
+**Anki Notes Import and Export** is an Anki add-on designed to import/export notes to raw text. You can edit those notes using any text editor of your choice and seamlessly import the changes back into Anki, updating existing fields based on their unique note ID (position).
+
+This is especially helpful for bulk editing content, reviewing your cards externally, or leveraging other text-processing tools while preserving the integrity of Anki fields, media elements, and HTML formatting.
+
+## Installation
+
+You can easily install this add-on directly from AnkiWeb using the shared add-on ID.
+
+1. Open Anki and go to `Tools` -> `Add-ons`.
+2. Click **Get Add-ons...**
+3. Enter the code `1353411495` and click **OK**.
+4. Restart Anki to allow the add-on to load.
+
+More info on the [AnkiWeb Shared Add-on Page](https://ankiweb.net/shared/info/1353411495).
+
+## Usage
+
+### Exporting Notes
+1. Open the **Anki Browser** (`Browse` from the main window).
+2. Select one or more notes you want to export.
+3. Right-click the selected notes.
+4. Click on **📄 Export Notes to Txt**.
+
+The exported text file will have the following structure:
+```text
+[[1700145263123]]
+[Front]
+Summary of the card's front side.
+
+[Back]
+Details for the card's back side...
+
+===
+
+[[1700145290001]]
+...
+```
+- `[[...]]` denotes the unique Note ID. **Do not modify this ID**, as it is required to match updates back to the correct note.
+- `[...]` indicates the field name. 
+
+### Importing Notes
+
+1. On the main Anki window, click the **Tools** menu.
+2. Click on **📄 Import Notes from Txt**.
+3. Select the `.txt` file you previously exported and edited.
+4. A confirmation dialog will appear indicating how many notes were successfully updated and how many fields were modified.
+
+The add-on will intelligently parse the Note IDs and Field Names, only updating the note content where differences are detected. Media tags and HTML structures are handled robustly to prevent breaking your rich formatting!
