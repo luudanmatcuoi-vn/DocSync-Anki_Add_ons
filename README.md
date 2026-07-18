@@ -28,20 +28,18 @@ More info on the [AnkiWeb Shared Add-on Page](https://ankiweb.net/shared/info/13
 
 The exported text file will have the following structure:
 ```text
-[[1700145263123]]
-[Front]
-Summary of the card's front side.
-
-[Back]
-Details for the card's back side...
-
+### START_CONFIG
+{"notetype": "", "deck": "", "fields": [""]}
+### END_CONFIG
+===[anki-id]
+(content)
+>>>
+(content)
 ===
-
-[[1700145290001]]
-...
+(content2)
+>>>
+(content2)
 ```
-- `[[...]]` denotes the unique Note ID. **Do not modify this ID**, as it is required to match updates back to the correct note.
-- `[...]` indicates the field name. 
 
 ### Importing Notes
 
