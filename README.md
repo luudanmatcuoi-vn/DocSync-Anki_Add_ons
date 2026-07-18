@@ -1,10 +1,10 @@
-# Anki Notes Import and Export
+# DocSync (Notes Import/Export)
 
 ## Description
 
-**Anki Notes Import and Export** is an Anki add-on designed to import/export notes to raw text. You can edit those notes using any text editor of your choice and seamlessly import the changes back into Anki, updating existing fields based on their unique note ID (position).
+**DocSync (Notes Import/Export)** is an Anki add-on designed to import/export notes to rich text. You can edit those notes using any document editor of your choice (recommend gg docs) and seamlessly import the changes back into Anki, updating existing fields based on their unique note ID (position).
 
-This is especially helpful for bulk editing content, reviewing your cards externally, or leveraging other text-processing tools while preserving the integrity of Anki fields, media elements, and HTML formatting.
+This is especially helpful for bulk editing content, reviewing your cards externally, or leveraging other text-processing tools while preserving the integrity of Anki fields, media elements (only support image), and HTML formatting.
 
 ## Installation
 
@@ -19,11 +19,12 @@ More info on the [AnkiWeb Shared Add-on Page](https://ankiweb.net/shared/info/13
 
 ## Usage
 
+
 ### Exporting Notes
 1. Open the **Anki Browser** (`Browse` from the main window).
 2. Select one or more notes you want to export.
 3. Right-click the selected notes.
-4. Click on **📄 Export Notes to Txt**.
+4. Click on **📄 DocSync: Export Notes to Docs**.
 
 The exported text file will have the following structure:
 ```text
@@ -45,8 +46,7 @@ Details for the card's back side...
 ### Importing Notes
 
 1. On the main Anki window, click the **Tools** menu.
-2. Click on **📄 Import Notes from Txt**.
-3. Select the `.txt` file you previously exported and edited.
-4. A confirmation dialog will appear indicating how many notes were successfully updated and how many fields were modified.
+2. Click on **📄 DocSync: Import Notes from Docs**.
+4. Pasted rich-text and press import.
 
 The add-on will intelligently parse the Note IDs and Field Names, only updating the note content where differences are detected. Media tags and HTML structures are handled robustly to prevent breaking your rich formatting!

@@ -1,31 +1,24 @@
 """
-TxtSync — Anki Add-on
-
-Export selected notes to a human-readable text format from the browser,
-and import text back into notes from the Tools menu.
+DocSync — Anki Add-on
 """
-
 from aqt import mw, gui_hooks
-from aqt.qt import *
+from aqt.qt import QAction
 from aqt.browser import Browser
 from aqt.utils import qconnect
 
 from .export_notes import export_selected_notes
 from .import_notes import import_notes_from_txt
+# from .paste_card import new_card_from_clipboard
 
 
 # ---------------------------------------------------------------------------
-# Browser menu hook (right-click / menu bar)
+# Browser menu hook
 # ---------------------------------------------------------------------------
 def setup_browser_menu(browser: Browser) -> None:
-    """Add 'Export Notes to Txt' to Notes, Cards, and Edit menus."""
-    menus = [
-        browser.form.menu_Notes,
-        browser.form.menu_Cards,
-    ]
+    menus = [browser.form.menu_Notes, browser.form.menu_Cards]
     for menu in menus:
         menu.addSeparator()
-        action = menu.addAction("📄 Export Notes to Txt")
+        action = menu.addAction("📄 DocSync: Export Notes to Docs")
         qconnect(action.triggered, lambda _, b=browser: export_selected_notes(b))
 
 
@@ -33,14 +26,14 @@ def setup_browser_menu(browser: Browser) -> None:
 # Main window Tools menu
 # ---------------------------------------------------------------------------
 def setup_tools_menu() -> None:
-    """Add 'Import Notes from Txt' to the main window Tools menu."""
-    action = QAction("📄 Import Notes from Txt", mw)
-    action.triggered.connect(lambda: import_notes_from_txt())
-    mw.form.menuTools.addAction(action)
+    import_action = QAction("📄 DocSync: Import Notes from Docs", mw)
+    import_action.triggered.connect(lambda: import_notes_from_txt())
+    mw.form.menuTools.addAction(import_action)
+
+    # paste_action = QAction("🖼️ DocSync: New Card from Clipboard", mw)
+    # paste_action.triggered.connect(lambda: new_card_from_clipboard())
+    # mw.form.menuTools.addAction(paste_action)
 
 
-# ---------------------------------------------------------------------------
-# Register hooks
-# ---------------------------------------------------------------------------
 gui_hooks.browser_menus_did_init.append(setup_browser_menu)
 setup_tools_menu()
