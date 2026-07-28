@@ -43,31 +43,70 @@ def _apply(text: str, replacements: list[tuple[str, str]]) -> str:
     return text
 
 # ---------------------------------------------------------------------------
-# Xử lý ẢNH BASE64 (Dùng Regex bóc tách & check trùng trong Collection)
+# Xử lý ẢNH BASE64 VÀ LOCAL TEMP FILE (Dùng Regex bóc tách & check trùng)
 # ---------------------------------------------------------------------------
 _RE_IMG_WITH_HINT = re.compile(
-    r'<img\b[^>]*\bsrc="data:(?P<mime>[^;"]+);base64,(?P<data>[^"]+)"[^>]*>'
+    r'<img\b[^>]*\bsrc=["\'](?P<src>[^"\']+)["\'][^>]*>'
     r'(?:\s|<br\s*/?>|</?(?:div|p|span)[^>]*>)*'
-    r'(?:\(([^()\n]{1,120})\))?',
+    r'(?:\((?P<hint>[^()\n]{1,120})\))?',
     re.IGNORECASE | re.DOTALL,
 )
 
-def resolve_base64_images(html_in: str) -> str:
+def resolve_images(html_in: str) -> str:
     import base64
+    import os
+    from urllib.parse import urlparse
+    from urllib.request import url2pathname
+
+    _RE_LOCAL_PATH = re.compile(r'^[A-Za-z]:[\\/]|^/')
 
     def repl(m: re.Match) -> str:
-        mime = m.group("mime")
-        b64data = m.group("data")
-        hint = m.group(3)
+        src = m.group("src")
+        hint = m.group("hint")
         suggested_name = hint.strip() if hint else None
-        ext = "." + mime.split("/")[-1] if "/" in mime else ".png"
 
-        # Nếu ảnh (có tên hint) đã tồn tại trong media Anki => lấy luôn ảnh gốc, bỏ qua base64
+        if src.startswith("data:"):
+            try:
+                mime_data = src[5:]
+                if ";base64," not in mime_data:
+                    return m.group(0)
+                mime, b64data = mime_data.split(";base64,", 1)
+                ext = "." + mime.split("/")[-1] if "/" in mime else ".png"
+                data = base64.b64decode(b64data)
+            except Exception:
+                return m.group(0)
+
+        elif src.startswith("file://") or _RE_LOCAL_PATH.match(src):
+            try:
+                if src.startswith("file://"):
+                    parsed = urlparse(src)
+                    path = url2pathname(parsed.path)
+                else:
+                    # src trần kiểu "C:\...\clip_image001.png" hoặc "/tmp/....png"
+                    # (Word/WordPad/Writer đôi khi không kèm scheme file://)
+                    path = src
+
+                if not os.path.exists(path):
+                    return m.group(0)
+
+                # Nếu ảnh đã nằm sẵn trong thư mục media (vd export mode="media"
+                # rồi mở lại/paste lại), dùng luôn tên gốc, khỏi đọc-ghi lại.
+                media_dir_real = os.path.realpath(media.media_dir())
+                path_real = os.path.realpath(path)
+                if os.path.dirname(path_real) == media_dir_real:
+                    return f'<img src="{os.path.basename(path_real)}">'
+
+                with open(path, "rb") as f:
+                    data = f.read()
+                ext = os.path.splitext(path)[1] or ".png"
+            except Exception:
+                return m.group(0)
+        else:
+            return m.group(0)
+
         if suggested_name and media.file_exists(suggested_name):
             return f'<img src="{suggested_name}">'
 
-        # Nếu chưa có, giải mã base64 và lưu thẳng vào Collection Anki
-        data = base64.b64decode(b64data)
         filename = media.store_media(data, suggested_name=suggested_name, ext_hint=ext)
         return f'<img src="{filename}">'
 
@@ -147,7 +186,7 @@ _RE_MARKER_LINE = re.compile(
 
 def html_handle_function(body_html:str):
     # Bước 2: Regex tách và lưu base64, so sánh tên ảnh (không lưu thừa)
-    text = resolve_base64_images(body_html)
+    text = resolve_images(body_html)
 
     # Bước 3: Replace custom regex list 
     text = _apply(text, RAW_HTML_REPLACEMENTS)

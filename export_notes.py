@@ -4,7 +4,7 @@ import os
 
 from aqt import mw
 from aqt.browser import Browser
-from aqt.qt import QDialog, QHBoxLayout, QPushButton, QVBoxLayout, qconnect
+from aqt.qt import QDialog, QHBoxLayout, QPushButton, QVBoxLayout, QComboBox, QLabel, qconnect
 from aqt.utils import tooltip
 
 from .document_view import DocumentEditor, build_preview_html
@@ -42,10 +42,20 @@ class ExportDialog(QDialog):
             cfg["notetype"] = cfg_notetype
             cfg["deck"] = cfg_deck
             cfg["fields"] = cfg_fields
-
+        self.cfg = cfg
+        self.cards = cards
         self.doc_editor = DocumentEditor(self)
-        self.doc_editor.load_html(build_preview_html(cfg, cards))
+        self.doc_editor.load_html(build_preview_html(self.cfg, self.cards, mode="base64"))
         outer.addWidget(self.doc_editor)
+        
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Copy images mode:"))
+        self.mode_box = QComboBox()
+        self.mode_box.addItem("Base64 (slower but safter)", "base64")
+        self.mode_box.addItem("Media (from anki media - faster)", "media")
+        mode_row.addWidget(self.mode_box)
+        outer.addLayout(mode_row)
+        
 
         btn_row = QHBoxLayout()
         copy_btn = QPushButton("📋 Copy rich-text to Clipboard")
@@ -58,7 +68,14 @@ class ExportDialog(QDialog):
         qconnect(close_btn.clicked, self.close)
 
     def _copy(self):
+        mode = self.mode_box.currentData()  # "base64" hoặc "media"
+
+        # 1. Render theo mode đã chọn để copy
+        self.doc_editor.load_html(build_preview_html(self.cfg, self.cards, mode=mode))
         self.doc_editor.copy_rich_to_clipboard()
+
+        # 2. Render phục hồi lại dạng Base64 cho UI Preview
+        self.doc_editor.load_html(build_preview_html(self.cfg, self.cards, mode="base64"))
         tooltip("Coppied")
 
 def export_selected_notes(browser: Browser) -> None:

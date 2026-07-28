@@ -40,17 +40,39 @@ def _image_to_data_uri(filename: str) -> str | None:
     return f"data:image/{mime};base64,{b64}"
 
 
-def _embed_real_images(field_html: str) -> str:
+def _embed_real_images(field_html: str, mode: str = "base64") -> str:
     def repl(m: re.Match) -> str:
         src = m.group(1)
-        if src.startswith("data:"):
+        if src.startswith("data:") or src.startswith("file://"):
             return m.group(0)
+
+        if mode == "temp":
+            import shutil, tempfile
+            from pathlib import Path
+            path = os.path.join(media.media_dir(), src)
+            if not os.path.exists(path):
+                return m.group(0)
+
+            temp_path = os.path.join(tempfile.gettempdir(), src)
+            if not os.path.exists(temp_path):
+                shutil.copy2(path, temp_path)
+
+            file_uri = Path(temp_path).as_uri()
+            return f'<img src="{file_uri}"><br>{html_lib.escape(f"({src})")}'
+
+        if mode == "media":
+            from pathlib import Path
+            path = os.path.join(media.media_dir(), src)
+            if not os.path.exists(path):
+                return m.group(0)
+            file_uri = Path(path).as_uri()
+            return f'<img src="{file_uri}"><br>{html_lib.escape(f"({src})")}'
+
         data_uri = _image_to_data_uri(src)
         if not data_uri:
             return m.group(0)
         return f'<img src="{data_uri}"><br>{html_lib.escape(f"({src})")}'
     return _RE_IMG_SRC.sub(repl, field_html)
-
 
 def encode_config(cfg: dict) -> str:
     return json.dumps(cfg, ensure_ascii=False)
@@ -59,8 +81,8 @@ def build_config_block(cfg: dict, position: str = "start") -> str:
     if not cfg:
         return ""
     return f"### START_CONFIG\n{encode_config(cfg)}\n### END_CONFIG\n"
-    
-def build_preview_html(cfg: dict, cards: list[dict]) -> str:
+
+def build_preview_html(cfg: dict, cards: list[dict], mode: str = "base64") -> str:
     parts: list[str] = []
 
     cfg_block = build_config_block(cfg)
@@ -74,7 +96,8 @@ def build_preview_html(cfg: dict, cards: list[dict]) -> str:
         for i, field_html in enumerate(card["fields"]):
             if i > 0:
                 parts.append(_line(FIELD_SEP))
-            parts.append(_embed_real_images(field_html) + "<br>")
+            # Truyền tham số mode vào quá trình render ảnh
+            parts.append(_embed_real_images(field_html, mode) + "<br>")
         parts.append("<br>")
         
     if parts[-1] == "<br>":
