@@ -6,6 +6,7 @@ import unicodedata
 
 from aqt import mw
 from aqt.qt import (
+    QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -221,19 +222,27 @@ class ImportDialog(QDialog):
 
         btn_row = QHBoxLayout()
         self.import_btn = QPushButton("⬇️ Import")
+        self.clipboard_btn = QPushButton("️⬇️ Import from Clipboard") 
         self.close_btn = QPushButton("Close")
+        
         btn_row.addWidget(self.import_btn)
+        btn_row.addWidget(self.clipboard_btn)
         btn_row.addWidget(self.close_btn)
         layout.addLayout(btn_row)
 
-        qconnect(self.import_btn.clicked, self._import)
+        qconnect(self.import_btn.clicked, lambda _: self._import(from_clipboard=True))
+        qconnect(self.clipboard_btn.clicked, lambda _: self._import(from_clipboard=True))
         qconnect(self.close_btn.clicked, self.close)
 
-    def _import(self):
+    def _import(self, from_clipboard: bool):
         # Lấy trực tiếp HTML thay vì plain text mangled bởi QTextEdit
-        raw_html = self.doc_editor.edit.toHtml()
+        if from_clipboard:
+            mime = QApplication.clipboard().mimeData()
+            raw_html = mime.html()
+        else:
+            raw_html = self.doc_editor.edit.toHtml()
         
-        if not raw_html.strip():
+        if not raw_html or not raw_html.strip():
             tooltip("Nothing to import.")
             return
 
@@ -251,8 +260,7 @@ class ImportDialog(QDialog):
 
         result = do_import(cfg, cards)
         self.close()
-        showText(_build_result_text(result), title="DocSync — Import Result",
-                  minWidth=500, minHeight=400)
+        showText(_build_result_text(result), title="DocSync — Import Result", minWidth=500, minHeight=400)
 
 
 def import_notes_from_txt() -> None:
