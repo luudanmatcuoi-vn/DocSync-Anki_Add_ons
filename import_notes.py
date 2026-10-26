@@ -45,7 +45,7 @@ class _EditorShim(Editor):
 def sync_text_to_anki_html(text: str) -> str:
     if not text:
         return ""
-    result = media.placeholders_to_html_images(text)
+    result = text
     result = result.replace("\n", "<br>")
     result = unicodedata.normalize("NFC", result)
     result = result.replace("\x00", "")
@@ -215,38 +215,19 @@ class ImportDialog(QDialog):
         self.resize(800, 700)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Paste rich-text content"))
+        layout.addWidget(QLabel("Copy content in Word / Google Docs, then import the Windows clipboard."))
+        self.import_btn = QPushButton("Import from Clipboard")
+        layout.addWidget(self.import_btn)
+        qconnect(self.import_btn.clicked, self._import)
 
-        self.doc_editor = DocumentEditor(self)
-        layout.addWidget(self.doc_editor)
-
-        btn_row = QHBoxLayout()
-        self.import_btn = QPushButton("⬇️ Import")
-        self.clipboard_btn = QPushButton("️⬇️ Import from Clipboard") 
-        self.close_btn = QPushButton("Close")
-        
-        btn_row.addWidget(self.import_btn)
-        btn_row.addWidget(self.clipboard_btn)
-        btn_row.addWidget(self.close_btn)
-        layout.addLayout(btn_row)
-
-        qconnect(self.import_btn.clicked, lambda _: self._import(from_clipboard=True))
-        qconnect(self.clipboard_btn.clicked, lambda _: self._import(from_clipboard=True))
-        qconnect(self.close_btn.clicked, self.close)
-
-    def _import(self, from_clipboard: bool):
-        # Lấy trực tiếp HTML thay vì plain text mangled bởi QTextEdit
-        if from_clipboard:
-            mime = QApplication.clipboard().mimeData()
-            raw_html = mime.html()
-        else:
-            raw_html = self.doc_editor.edit.toHtml()
-        
-        if not raw_html or not raw_html.strip():
-            tooltip("Nothing to import.")
+    def _import(self):
+        from .clipboard_native import read_clipboard_html
+        try:
+            raw_html = read_clipboard_html()
+            cfg, cards = parse_pasted_html(raw_html, resolve_media=False)
+        except Exception as exc:
+            showText(str(exc), title="DocSync — Import failed")
             return
-
-        cfg, cards = parse_pasted_html(raw_html)
         if not cards:
             tooltip("No valid card blocks found.")
             return
@@ -258,6 +239,11 @@ class ImportDialog(QDialog):
         if not ok:
             return
 
+        try:
+            cfg, cards = parse_pasted_html(raw_html)
+        except Exception as exc:
+            showText(str(exc), title="DocSync — Cannot read image")
+            return
         result = do_import(cfg, cards)
         self.close()
         showText(_build_result_text(result), title="DocSync — Import Result", minWidth=500, minHeight=400)

@@ -3,214 +3,25 @@ from __future__ import annotations
 import html as html_lib
 import re
 import json
+import os
 
 from . import media
 
-# ---------------------------------------------------------------------------
-# Cấu hình danh sách Regex tự do xử lý lỗi HTML vặt
-# ---------------------------------------------------------------------------
-RAW_HTML_REPLACEMENTS: list[tuple[str, str]] = [
-    (r'<meta[^>]*>', ''),
-    (r'<!--.*?-->', ''),
-    (r'<head\b.*?</head>', ''),
-    (r'</?html[^>]*>', ''),
-    (r'</?body[^>]*>', ''),
-]
-
-_RE_GUID_WRAPPER_OPEN = re.compile(
-    r'<b\s+style="font-weight:\s*normal;?"[^>]*>', re.IGNORECASE
-)
-
-def _strip_guid_wrapper(html_in: str) -> str:
-    if not _RE_GUID_WRAPPER_OPEN.search(html_in):
-        return html_in
-    html_in = _RE_GUID_WRAPPER_OPEN.sub('', html_in, count=1)
-    idx = html_in.rfind('</b>')
-    if idx != -1:
-        html_in = html_in[:idx] + html_in[idx + len('</b>'):]
-    return html_in
-
-TEXT_REPLACEMENTS: list[tuple[str, str]] = [
-    (r'\u00a0', ' '),
-    (r'[\u200b\u200c\u200d]', ''),
-    (r'[ \t]+\n', '\n'),
-    (r'\n{3,}', '\n\n'),
-]
-
-def _apply(text: str, replacements: list[tuple[str, str]]) -> str:
-    for pat, repl in replacements:
-        text = re.sub(pat, repl, text, flags=re.IGNORECASE | re.DOTALL)
-    return text
-
-# ---------------------------------------------------------------------------
-# Xử lý ẢNH BASE64 VÀ LOCAL TEMP FILE (Dùng Regex bóc tách & check trùng)
-# ---------------------------------------------------------------------------
-_RE_IMG_WITH_HINT = re.compile(
-    r'<img\b[^>]*\bsrc=["\'](?P<src>[^"\']+)["\'][^>]*>'
-    r'(?:\s|<br\s*/?>|</?(?:div|p|span)[^>]*>)*'
-    r'(?:\((?P<hint>[^()\n]{1,120})\))?',
-    re.IGNORECASE | re.DOTALL,
-)
-
-def resolve_images(html_in: str) -> str:
-    import base64
-    import os
-    from urllib.parse import urlparse
-    from urllib.request import url2pathname
-
-    _RE_LOCAL_PATH = re.compile(r'^[A-Za-z]:[\\/]|^/')
-
-    def repl(m: re.Match) -> str:
-        src = m.group("src")
-        hint = m.group("hint")
-        suggested_name = hint.strip() if hint else None
-
-        if src.startswith("data:"):
-            try:
-                mime_data = src[5:]
-                if ";base64," not in mime_data:
-                    return m.group(0)
-                mime, b64data = mime_data.split(";base64,", 1)
-                ext = "." + mime.split("/")[-1] if "/" in mime else ".png"
-                data = base64.b64decode(b64data)
-            except Exception:
-                return m.group(0)
-
-        elif src.startswith("file://") or _RE_LOCAL_PATH.match(src):
-            try:
-                if src.startswith("file://"):
-                    parsed = urlparse(src)
-                    path = url2pathname(parsed.path)
-                else:
-                    # src trần kiểu "C:\...\clip_image001.png" hoặc "/tmp/....png"
-                    # (Word/WordPad/Writer đôi khi không kèm scheme file://)
-                    path = src
-
-                if not os.path.exists(path):
-                    return m.group(0)
-
-                # Nếu ảnh đã nằm sẵn trong thư mục media (vd export mode="media"
-                # rồi mở lại/paste lại), dùng luôn tên gốc, khỏi đọc-ghi lại.
-                media_dir_real = os.path.realpath(media.media_dir())
-                path_real = os.path.realpath(path)
-                if os.path.dirname(path_real) == media_dir_real:
-                    return f'<img src="{os.path.basename(path_real)}">'
-
-                with open(path, "rb") as f:
-                    data = f.read()
-                ext = os.path.splitext(path)[1] or ".png"
-            except Exception:
-                return m.group(0)
-        else:
-            return m.group(0)
-
-        if suggested_name and media.file_exists(suggested_name):
-            return f'<img src="{suggested_name}">'
-
-        filename = media.store_media(data, suggested_name=suggested_name, ext_hint=ext)
-        return f'<img src="{filename}">'
-
-    return _RE_IMG_WITH_HINT.sub(repl, html_in)
-
-# ---------------------------------------------------------------------------
-# Xử lý các thẻ RICHTEXT (span style sang html)
-# ---------------------------------------------------------------------------
-_RE_SPAN_TAG = re.compile(r'<span\b([^>]*)>|</span>', re.IGNORECASE)
-_RE_STYLE_ATTR = re.compile(r'style\s*=\s*"([^"]*)"', re.IGNORECASE)
-
-def _style_dict(style_attr: str) -> dict:
-    out = {}
-    for chunk in style_attr.split(";"):
-        if ":" not in chunk:
-            continue
-        k, v = chunk.split(":", 1)
-        out[k.strip().lower()] = v.strip()
-    return out
-
-def _tags_for_style(style: dict) -> tuple[list[str], list[str]]:
-    open_tags, close_tags = [], []
-    weight = style.get("font-weight", "400")
-    try:
-        is_bold = int(weight) >= 700
-    except ValueError:
-        is_bold = weight.lower() in ("bold", "bolder")
-    if is_bold:
-        open_tags.append("<b>")
-        close_tags.insert(0, "</b>")
-
-    if style.get("font-style", "").lower() == "italic":
-        open_tags.append("<i>")
-        close_tags.insert(0, "</i>")
-
-    if "underline" in style.get("text-decoration", "").lower():
-        open_tags.append("<u>")
-        close_tags.insert(0, "</u>")
-
-    color = style.get("color", "")
-    if color and color.lower() not in ("#000000", "black", "inherit"):
-        open_tags.append(f'<span style="color:{color}">')
-        close_tags.insert(0, "</span>")
-
-    bgcolor = style.get("background-color", "")
-    if bgcolor and bgcolor.lower() not in ("transparent", "inherit"):
-        open_tags.append(f'<span style="background-color:{bgcolor}">')
-        close_tags.insert(0, "</span>")
-
-    return open_tags, close_tags
-
-def clean_richtext_html(html_in: str) -> str:
-    stack, out, pos = [], [], 0
-    for m in _RE_SPAN_TAG.finditer(html_in):
-        out.append(html_in[pos:m.start()])
-        pos = m.end()
-        if m.group(0).lower() == "</span>":
-            close_tags = stack.pop() if stack else []
-            out.append("".join(close_tags))
-        else:
-            attrs = m.group(1) or ""
-            style_m = _RE_STYLE_ATTR.search(attrs)
-            style = _style_dict(style_m.group(1)) if style_m else {}
-            open_tags, close_tags = _tags_for_style(style)
-            stack.append(close_tags)
-            out.append("".join(open_tags))
-    out.append(html_in[pos:])
-    return "".join(out)
-
-# ---------------------------------------------------------------------------
-# Lột bỏ sạch sẽ các tag (như bọc <div> hoặc <p>) lỡ dính vào mốc === hoặc >>>
-# ---------------------------------------------------------------------------
 _RE_MARKER_LINE = re.compile(
     r'^[ \t]*(?:<[^>\n]+>[ \t]*)*(===(?:\[\d+\])?|>>>)[ \t]*(?:<[^>\n]+>[ \t]*)*[ \t]*$',
     re.MULTILINE,
 )
 
-def html_handle_function(body_html:str):
-    # Bước 2: Regex tách và lưu base64, so sánh tên ảnh (không lưu thừa)
-    text = resolve_images(body_html)
-
-    # Bước 3: Replace custom regex list 
-    text = _apply(text, RAW_HTML_REPLACEMENTS)
-    text = _strip_guid_wrapper(text)
-
-    # Bước 4: Xử lý thẻ richtext sang thẻ html thuần
-    text = clean_richtext_html(text)
-
-    # Flatten block-level structure về newlines thật
-    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'</(p|div)\s*>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<(p|div)\b[^>]*>', '', text, flags=re.IGNORECASE)
-    text = text.strip()
-
-    text = html_lib.unescape(text)
-    text = _apply(text, TEXT_REPLACEMENTS)
-
-    # Tiêu diệt các tag html lỡ bọc lấy dấu tách blocks
+def html_handle_function(body_html: str):
+    from .richtext import normalize_html
+    text = normalize_html(body_html)
+    text = re.sub(r"(?m)^([^\n]*?)&gt;&gt;&gt;([^\n]*)$", lambda m: m.group(0).replace("&gt;&gt;&gt;", ">>>") if not re.sub(r"<[^>]+>", "", m.group(1) + m.group(2)).strip() else m.group(0), text)
     text = _RE_MARKER_LINE.sub(lambda m: m.group(1), text)
     return text
- 
+
 _RE_CONFIG = re.compile(
-    r'#{1,}\s*START_CONFIG.*#{1,}\s*END_CONFIG',
-    re.DOTALL,
+    r'^[^\n]*#{1,}\s*START_CONFIG.*?#{1,}\s*END_CONFIG[^\n]*',
+    re.DOTALL | re.MULTILINE,
 )
 
 def decode_config(blob: str) -> dict:
@@ -223,15 +34,13 @@ def decode_config(blob: str) -> dict:
         return {}
 
 def config_extract_handle(raw_text:str):
-    cfg_text = html_handle_function(raw_text)
+    from bs4 import BeautifulSoup
+    text = html_handle_function(raw_text)
+    cfg_text = BeautifulSoup(text, 'html.parser').get_text()
     m = _RE_CONFIG.search(cfg_text)
     if not m:
-        cfg_text = ""
-    else:
-        cfg_text = m.group(0)
-    cfg_text = re.sub(r"<[^>]+>","",cfg_text)
-    cfg_text = re.sub(r"#{1,}\s*START_CONFIG","",cfg_text)
-    cfg_text = re.sub(r"#{1,}\s*END_CONFIG","",cfg_text)
+        return {}
+    cfg_text = re.sub(r"#{1,}\s*(?:START_CONFIG|END_CONFIG)", "", m.group(0))
     cfg = decode_config(cfg_text)
     return cfg
 
@@ -242,15 +51,16 @@ def extract_body(text: str):
     remaining = text[: m.start()] + text[m.end():]
     return remaining.strip("\n")
     
-def parse_pasted_html(raw_html: str) -> tuple[dict, list[dict]]:
+def parse_pasted_html(raw_html: str, resolve_media: bool = True) -> tuple[dict, list[dict]]:
     """Pipeline gốc: Đi qua từng bước chuẩn Workflow trực tiếp trên HTML rác."""
 
     # Bước 1: Tách JSON Config
+    normalized = html_handle_function(raw_html)
     cfg = config_extract_handle(raw_html)
-    body_html = extract_body(raw_html)
+    body_html = extract_body(normalized)
     
     # Bước 2->4: html_handle_function
-    text = html_handle_function(body_html)
+    text = body_html
     
     # if True:
         # raise ValueError(str(raw_html)+"\n----------\n"+str(cfg)+"\n----------\n"+str(body_html) +"\n----------\n"+str(text)   )
@@ -272,7 +82,7 @@ def parse_pasted_html(raw_html: str) -> tuple[dict, list[dict]]:
         
         # Tách fields
         raw_fields = _RE_FIELD_SEP.split(card_body)
-        fields = [f.strip("\n") for f in raw_fields]
+        fields = [resolve_field_images(f.strip("\n")) if resolve_media else f.strip("\n") for f in raw_fields]
         
         # Bỏ đi thẻ trống do Regex thừa
         if len(fields) == 1 and fields[0] == "":
@@ -281,3 +91,84 @@ def parse_pasted_html(raw_html: str) -> tuple[dict, list[dict]]:
         cards.append({"nid": nid, "fields": fields})
 
     return cfg, cards
+
+def resolve_field_images(field: str) -> str:
+    """Filename hints are authoritative, including when the picture was removed."""
+    import base64
+    from pathlib import Path
+    from urllib.parse import urlparse, unquote
+    from urllib.request import url2pathname
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(field, 'html.parser')
+    # Work on lines, so ordinary parenthesized prose cannot claim an image.
+    lines = str(soup).split('\n')
+    name_re = re.compile(r'^\(([^()\r\n]+\.(?:png|jpe?g|gif|webp|bmp|svg|avif))\)$', re.I)
+    for i, line in enumerate(lines):
+        hint = name_re.fullmatch(BeautifulSoup(line, 'html.parser').get_text().strip())
+        if not hint:
+            continue
+        name = hint.group(1)
+        if name != os.path.basename(name) or '/' in name or '\\' in name:
+            raise ValueError('Invalid image filename: ' + name)
+        previous = i - 1
+        while previous >= 0 and not lines[previous].strip(): previous -= 1
+        image = None
+        image_soup = None
+        if previous >= 0:
+            image_soup = BeautifulSoup(lines[previous], 'html.parser')
+            # Associate an image at the end of the preceding line, within this field.
+            if len(image_soup.find_all('img')) == 1 and not ''.join(image_soup.img.find_all_next(string=True)).strip():
+                image = image_soup.img
+        if media.file_exists(name):
+            replacement = f'<img data-docsync-keep="1" src="{html_lib.escape(name, quote=True)}">'
+        elif image:
+            replacement = save_image(str(image['src']), name).replace("<img ", '<img data-docsync-keep="1" ', 1)
+        else:
+            # Preserve the reference even when the original media file is absent.
+            replacement = f'<img data-docsync-keep="1" src="{html_lib.escape(name, quote=True)}">'
+        if image:
+            image.replace_with(BeautifulSoup(replacement, 'html.parser'))
+            lines[previous] = str(image_soup)
+            lines[i] = ''
+        else:
+            lines[i] = replacement
+    soup = BeautifulSoup('\n'.join(lines), 'html.parser')
+    for image in soup.find_all('img'):
+        src = image.get('src', '')
+        if image.has_attr('data-docsync-keep'):
+            del image['data-docsync-keep']
+            continue
+        if media.file_exists(src):
+            image['src'] = BeautifulSoup(save_image(os.path.join(media.media_dir(), src), None), 'html.parser').img['src']
+            continue
+        if not re.match(r'^(?:data:|file:|https?:|/|[A-Za-z]:)', src):
+            continue  # missing existing media reference
+        image['src'] = BeautifulSoup(save_image(src, None), 'html.parser').img['src']
+    return str(soup)
+
+
+def save_image(src: str, name: str | None) -> str:
+    import base64
+    from pathlib import Path
+    from urllib.parse import urlparse, unquote
+    from urllib.request import url2pathname, urlopen
+    if src.startswith('data:'):
+        header, encoded = src.split(',', 1)
+        if ';base64' not in header: raise ValueError('Unsupported image data URI')
+        data = base64.b64decode(encoded, validate=True)
+        ext = '.' + header.split('/')[1].split(';')[0]
+    elif src.startswith('https://'):
+        with urlopen(src, timeout=20) as response:
+            if not response.headers.get('Content-Type', '').startswith('image/'):
+                raise ValueError('Image URL did not return an image')
+            data = response.read(32 * 1024 * 1024 + 1)
+            ext = '.' + response.headers.get_content_subtype()
+        if len(data) > 32 * 1024 * 1024: raise ValueError('Image exceeds 32 MiB')
+    elif src.startswith('file:') or os.path.isabs(src):
+        path = url2pathname(unquote(urlparse(src).path)) if src.startswith('file:') else src
+        data = Path(path).read_bytes()
+        ext = Path(path).suffix or '.png'
+    else:
+        raise ValueError('Cannot read image: ' + src[:160])
+    filename = media.store_media(data, name, ext)
+    return f'<img src="{html_lib.escape(filename, quote=True)}">'
