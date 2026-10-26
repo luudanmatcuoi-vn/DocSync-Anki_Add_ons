@@ -83,7 +83,7 @@ def do_import(cfg: dict, cards: list[dict]) -> dict:
                 error_nids.append(nid)
                 continue
 
-            field_names = cfg.get("fields") or list(note.keys())
+            field_names = cfg["fields"] if "fields" in cfg else list(note.keys())
             changed = False
             
             # zip() sẽ linh hoạt ngắt tại vị trí ngắn hơn. Nếu raw_fields có 2 trường (nhưng Note có 5), nó chỉ điền đúng 2 trường đầu.
@@ -212,10 +212,12 @@ class ImportDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("DocSync — Import")
-        self.resize(800, 700)
+        self.resize(460, 130)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Copy content in Word / Google Docs, then import the Windows clipboard."))
+        description = QLabel("Copy DocSync content from Word, Google Docs or a text editor, then import.")
+        description.setWordWrap(True)
+        layout.addWidget(description)
         self.import_btn = QPushButton("Import from Clipboard")
         layout.addWidget(self.import_btn)
         qconnect(self.import_btn.clicked, self._import)

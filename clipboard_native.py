@@ -26,12 +26,39 @@ def read_clipboard_html() -> str:
     fmt = win32clipboard.RegisterClipboardFormat('HTML Format')
     win32clipboard.OpenClipboard()
     try:
-        if not win32clipboard.IsClipboardFormatAvailable(fmt):
-            raise ValueError('Clipboard has no HTML Format. Copy the document content from Word or Google Docs.')
-        data = win32clipboard.GetClipboardData(fmt)
+        if win32clipboard.IsClipboardFormatAvailable(fmt):
+            data = win32clipboard.GetClipboardData(fmt)
+            if data:
+                return decode_cf_html(data) if isinstance(data, bytes) else data
+        if win32clipboard.IsClipboardFormatAvailable(13):  # CF_UNICODETEXT
+            return plaintext_to_html(win32clipboard.GetClipboardData(13))
+        raise ValueError('Clipboard has neither HTML nor Unicode text.')
     finally:
         win32clipboard.CloseClipboard()
-    return decode_cf_html(data) if isinstance(data, bytes) else data
+
+
+def plaintext_to_html(text: str) -> str:
+    import html
+    text = text.replace('\r\n', '\n').replace('\r', '\n').lstrip('\ufeff').rstrip('\0')
+    if not re.search(r'^===(?:\[\d+\])?[ \t]*$', text, re.MULTILINE):
+        raise ValueError('Plain text must contain DocSync note markers: === or ===[note-id].')
+    if 'START_CONFIG' in text or 'END_CONFIG' in text:
+        import json
+        match = re.search(r'^### START_CONFIG[ \t]*\n(.*?)\n### END_CONFIG[ \t]*$', text, re.MULTILINE | re.DOTALL)
+        if not match:
+            raise ValueError('Invalid DocSync configuration block in plain text.')
+        try:
+            config = json.loads(match.group(1))
+        except ValueError as exc:
+            raise ValueError('Invalid JSON in DocSync configuration block.') from exc
+        if not isinstance(config, dict):
+            raise ValueError('DocSync configuration must be a JSON object.')
+        if 'fields' in config and (not isinstance(config['fields'], list) or not config['fields']
+                                  or any(not isinstance(name, str) or not name for name in config['fields'])
+                                  or len(set(config['fields'])) != len(config['fields'])):
+            raise ValueError('DocSync fields must be a nonempty list of unique field names.')
+    # Escape markup so text like <b> stays literal, not rich formatting.
+    return html.escape(text, quote=False).replace('\n', '<br>')
 
 
 def encode_cf_html(fragment: str) -> bytes:
