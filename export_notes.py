@@ -1,29 +1,35 @@
 from __future__ import annotations
 
-import os
-
 from aqt import mw
 from aqt.browser import Browser
-from aqt.qt import QObject, QThread, pyqtSignal, QApplication, QMimeData, QDialog, QHBoxLayout, QPushButton, QVBoxLayout, QComboBox, QLabel, qconnect
+from aqt.qt import QObject, QThread, pyqtSignal, QDialog, QHBoxLayout, QPushButton, QVBoxLayout, QComboBox, QLabel, qconnect
 from aqt.utils import tooltip
 
+from .clipboard_native import write_clipboard_html
 from . import media
 from .document_view import DocumentEditor, build_preview_html
 
 
 class RenderWorker(QObject):
-    finished = pyqtSignal(str, str)
+    finished = pyqtSignal(str)
 
-    def __init__(self, cfg, cards, mode, directory):
+    def __init__(self, cfg, cards, mode, directory, owner):
         super().__init__()
         self.args = cfg, cards, mode, directory
+        self.owner = owner
 
     def run(self):
         try:
-            # No Qt widgets or Anki collection access on the worker thread.
-            self.finished.emit(build_preview_html(*self.args), "")
+            # Build all selected notes without passing them through a Qt document.
+            html = build_preview_html(*self.args)
+            write_clipboard_html(html, self.owner)
+            self.finished.emit("")
         except Exception as exc:
-            self.finished.emit("", str(exc))
+            self.finished.emit(str(exc))
+
+
+def preview_cards(cards):
+    return cards[:20] if len(cards) > 100 else cards
 
 
 class ExportDialog(QDialog):
@@ -61,9 +67,19 @@ class ExportDialog(QDialog):
         self.cfg = cfg
         self.cards = cards
         self.doc_editor = DocumentEditor(self)
-        self.rendered_html = build_preview_html(self.cfg, self.cards, mode="media")
-        self.doc_editor.load_html(self.rendered_html)
+        self.doc_editor.load_html(build_preview_html(self.cfg, preview_cards(self.cards), mode="media"))
+        self.doc_editor.edit.setReadOnly(True)
         outer.addWidget(self.doc_editor)
+        if len(self.cards) > 100:
+            notice = QLabel(f"Preview shows only the first 20 of {len(self.cards)} notes. "
+                            "Click Copy to Clipboard to copy all selected notes.")
+            notice.setWordWrap(True)
+            font = notice.font()
+            font.setPointSizeF(max(7, font.pointSizeF() - 1))
+            notice.setFont(font)
+            outer.addWidget(notice)
+        self.status_label = QLabel("")
+        outer.addWidget(self.status_label)
         
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Copy images mode:"))
@@ -75,39 +91,43 @@ class ExportDialog(QDialog):
         
 
         btn_row = QHBoxLayout()
-        self.copy_btn = copy_btn = QPushButton("📋 Copy rich-text to Clipboard")
+        self.copy_btn = copy_btn = QPushButton("📋 Copy to Clipboard (all notes)")
         close_btn = QPushButton("Close")
         btn_row.addWidget(copy_btn)
         btn_row.addWidget(close_btn)
         outer.addLayout(btn_row)
 
         self.thread = None
-        qconnect(self.mode_box.currentIndexChanged, self._render)
         qconnect(copy_btn.clicked, self._copy)
         qconnect(close_btn.clicked, self.close)
 
-    def _render(self):
+    def _copy(self):
+        if self.thread is not None and self.thread.isRunning():
+            return
+        self.status_label.setText(f"Preparing and copying all {len(self.cards)} notes…")
         self.copy_btn.setEnabled(False)
         self.mode_box.setEnabled(False)
         self.thread = QThread(self)
-        self.worker = RenderWorker(self.cfg, self.cards, self.mode_box.currentData(), media.media_dir())
+        self.worker = RenderWorker(self.cfg, self.cards, self.mode_box.currentData(), media.media_dir(), int(self.winId()))
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._rendered)
+        self.thread.finished.connect(self._copy_finished)
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.start()
 
-    def _rendered(self, html, error):
+    def _rendered(self, error):
         from aqt.utils import showText
         if error:
+            self.status_label.setText("Copy failed. You can retry.")
             showText(error, title="DocSync — Export failed")
         else:
-            self.rendered_html = html
-            # Avoid QTextEdit parsing/decoding a huge base64 document on the GUI thread.
-            if self.mode_box.currentData() == "media":
-                self.doc_editor.load_html(html)
-        self.copy_btn.setEnabled(not bool(error))
+            self.status_label.setText(f"Copied all {len(self.cards)} notes.")
+            tooltip("Copied all selected notes")
+
+    def _copy_finished(self):
+        self.copy_btn.setEnabled(True)
         self.mode_box.setEnabled(True)
 
     def reject(self):
@@ -122,12 +142,6 @@ class ExportDialog(QDialog):
             return
         super().closeEvent(event)
 
-    def _copy(self):
-        mime = QMimeData()
-        mime.setHtml(self.rendered_html)
-        mime.setText(self.doc_editor.edit.toPlainText())
-        QApplication.clipboard().setMimeData(mime)
-        tooltip("Copied")
 
 def export_selected_notes(browser: Browser) -> None:
     note_ids = browser.selectedNotes()
